@@ -87,15 +87,16 @@ class LinearMap(Transform):
         """
         super(LinearMap, self).__init__()
 
-        self.weights = torch.nn.init.xavier_uniform_(torch.empty(
-            (outdim, indim), dtype=torch.float64, requires_grad=True, device=device))
+        self.weights = torch.nn.init.kaiming_uniform_(torch.empty(
+            (outdim, indim), dtype=torch.float32, requires_grad=True, device=device),
+            nonlinearity='relu')
 
         # self.weights = 0.01 * \
         #     torch.rand((outdim, indim), dtype=torch.float64,
         #                requires_grad=True, device=device)
 
         self.bias = 0.01 * \
-            torch.rand((outdim, 1), dtype=torch.float64,
+            torch.rand((outdim, 1), dtype=torch.float32,
                        requires_grad=True, device=device)
 
         self.lr = lr
@@ -118,11 +119,11 @@ class LinearMap(Transform):
 
         # compute grad_wrt_weights
         self.grad_wrt_weights = torch.matmul(
-            grad_wrt_out, self.x.T) / batch_size
+            grad_wrt_out, self.x.T)
 
         # compute grad_wrt_bias
         self.grad_wrt_bias = torch.sum(
-            grad_wrt_out, axis=1, keepdims=True) / batch_size
+            grad_wrt_out, axis=1, keepdims=True)
 
         # compute & return grad_wrt_input
         self.grad_wrt_input = torch.matmul(self.weights.T, grad_wrt_out)
@@ -161,9 +162,10 @@ class SoftmaxCrossEntropyLoss(object):
             torch.sum(self.exp_logits, dim=0, keepdims=True)
 
         # Calculate cross entropy loss
-        return -torch.mean(
-            torch.sum(labels * torch.log(self.sm), axis=0)
+        loss = -torch.mean(
+            torch.sum(labels * torch.log(self.sm + 1e-10), dim=0)
         )
+        return loss
 
     def backward(self):
         """
@@ -194,10 +196,11 @@ class SingleLayerMLP(Transform):
         self.hiddendim = hidden_layer
         self.lr = lr
 
-        self.first_layer = LinearMap(indim=indim, outdim=self.hiddendim)
+        self.first_layer = LinearMap(
+            indim=indim, outdim=self.hiddendim, lr=self.lr)
         self.activation = ReLU()
-        self.output_layer = LinearMap(
-            indim=self.hiddendim, outdim=outdim, lr=lr)
+        self.hidden_layer = LinearMap(
+            indim=self.hiddendim, outdim=outdim, lr=self.lr)
 
     def forward(self, x):
         """
@@ -205,10 +208,12 @@ class SingleLayerMLP(Transform):
         return the presoftmax logits shape(outdim, batch_size)
         """
 
-        self.hidden = self.first_layer.forward(x)
-        self.hidden = self.activation.forward(self.hidden)
-        output = self.output_layer.forward(self.hidden)
-        return output
+        self.input = x
+        self.z1 = self.first_layer.forward(x)
+        self.a1 = self.activation.forward(self.z1)
+        self.output = self.hidden_layer.forward(self.a1)
+
+        return self.output
 
     def backward(self, grad_wrt_out):
         """
@@ -216,19 +221,21 @@ class SingleLayerMLP(Transform):
         calculate the gradients wrt the parameters
         """
         # Backpropagate through output layer
-        grad_hidden = self.output_layer.backward(grad_wrt_out)
+        grad_hidden = self.hidden_layer.backward(grad_wrt_out)
 
         # Backpropagate through ReLU
-        grad_hidden *= self.activation.backward(self.hidden)
+        grad_z1 = grad_hidden * self.activation.backward(self.z1)
 
         # Backpropagate through first layer
-        self.first_layer.backward(grad_hidden)
+        grad_input = self.first_layer.backward(grad_z1)
+
+        return grad_input
 
     def step(self):
         """update model parameters"""
 
         self.first_layer.step()
-        self.output_layer.step()
+        self.hidden_layer.step()
 
 
 class DS(Dataset):
@@ -304,11 +311,11 @@ if __name__ == "__main__":
 
         for X_train, y_train in train_loader:
             # Move data to GPU and convert to correct format
-            X_train = X_train.to(device).T  # Shape (indim, batch_size)
+            X_train = X_train.to(device).T.float()
 
             y_train = labels2onehot(y_train.numpy()).T
             y_train = torch.tensor(
-                y_train, dtype=torch.float64, device=device)
+                y_train, dtype=torch.float32, device=device)
 
             # Forward pass
             logits = model.forward(X_train)
@@ -337,10 +344,10 @@ if __name__ == "__main__":
 
         with torch.no_grad():  # No gradients needed during testing
             for X_test, y_test in test_loader:
-                X_test = X_test.to(device).T
+                X_test = X_test.to(device).T.float()
                 y_test = labels2onehot(y_test.numpy()).T
                 y_test = torch.tensor(
-                    y_test, dtype=torch.float64, device=device)
+                    y_test, dtype=torch.float32, device=device)
 
                 test_logits = model.forward(X_test)
                 loss = loss_fn.forward(test_logits, y_test)
