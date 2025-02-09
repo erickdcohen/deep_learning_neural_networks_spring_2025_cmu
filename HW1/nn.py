@@ -87,9 +87,12 @@ class LinearMap(Transform):
         """
         super(LinearMap, self).__init__()
 
-        self.weights = 0.01 * \
-            torch.rand((outdim, indim), dtype=torch.float64,
-                       requires_grad=True, device=device)
+        self.weights = torch.nn.init.xavier_uniform_(torch.empty(
+            (outdim, indim), dtype=torch.float64, requires_grad=True, device=device))
+
+        # self.weights = 0.01 * \
+        #     torch.rand((outdim, indim), dtype=torch.float64,
+        #                requires_grad=True, device=device)
 
         self.bias = 0.01 * \
             torch.rand((outdim, 1), dtype=torch.float64,
@@ -118,7 +121,8 @@ class LinearMap(Transform):
             grad_wrt_out, self.x.T) / batch_size
 
         # compute grad_wrt_bias
-        self.grad_wrt_bias = torch.mean(grad_wrt_out, axis=1, keepdims=True)
+        self.grad_wrt_bias = torch.sum(
+            grad_wrt_out, axis=1, keepdims=True) / batch_size
 
         # compute & return grad_wrt_input
         self.grad_wrt_input = torch.matmul(self.weights.T, grad_wrt_out)
@@ -133,6 +137,14 @@ class LinearMap(Transform):
             self.weights -= self.lr * self.grad_wrt_weights
             self.bias -= self.lr * self.grad_wrt_bias
 
+        # with torch.no_grad():
+        #     # Print before update
+        #     print("Before Update: ", self.weights[0, 0].item())
+        #     self.weights -= self.lr * self.grad_wrt_weights
+        #     self.bias -= self.lr * self.grad_wrt_bias
+        #     # Print after update
+        #     print("After Update: ", self.weights[0, 0].item())
+
 
 class SoftmaxCrossEntropyLoss(object):
     def forward(self, logits, labels):
@@ -146,11 +158,11 @@ class SoftmaxCrossEntropyLoss(object):
         self.labels = labels
         self.exp_logits = torch.exp(logits)
         self.sm = self.exp_logits / \
-            torch.sum(self.exp_logits, axis=1, keepdims=True)
+            torch.sum(self.exp_logits, dim=0, keepdims=True)
 
         # Calculate cross entropy loss
         return -torch.mean(
-            torch.sum(labels * torch.log(self.sm), axis=1)
+            torch.sum(labels * torch.log(self.sm), axis=0)
         )
 
     def backward(self):
@@ -159,7 +171,8 @@ class SoftmaxCrossEntropyLoss(object):
         (don't forget to divide by batch_size because your loss is a mean)
         """
         batch_size = self.labels.shape[1]
-        return (self.sm - self.labels) / batch_size
+        grad_wrt_logits = (self.sm - self.labels) / batch_size
+        return grad_wrt_logits
 
     def getAccu(self):
         """
@@ -192,10 +205,10 @@ class SingleLayerMLP(Transform):
         return the presoftmax logits shape(outdim, batch_size)
         """
 
-        self.x = x
-        self.hidden = self.activation.forward(
-            self.first_layer.forward(self.x))
-        return self.output_layer.forward(self.hidden)
+        self.hidden = self.first_layer.forward(x)
+        self.hidden = self.activation.forward(self.hidden)
+        output = self.output_layer.forward(self.hidden)
+        return output
 
     def backward(self, grad_wrt_out):
         """
@@ -292,16 +305,10 @@ if __name__ == "__main__":
         for X_train, y_train in train_loader:
             # Move data to GPU and convert to correct format
             X_train = X_train.to(device).T  # Shape (indim, batch_size)
-            # One-hot encode in NumPy
+
             y_train = labels2onehot(y_train.numpy()).T
             y_train = torch.tensor(
-                y_train, dtype=torch.float64, device=device)  # Move to GPU
-
-            # Zero the gradients before each backward pass
-            model.first_layer.weights.grad = None
-            model.first_layer.bias.grad = None
-            model.output_layer.weights.grad = None
-            model.output_layer.bias.grad = None
+                y_train, dtype=torch.float64, device=device)
 
             # Forward pass
             logits = model.forward(X_train)
@@ -311,13 +318,12 @@ if __name__ == "__main__":
             # Backward pass and update
             model.backward(loss_fn.backward())
 
+            model.step()
+
             # Compute accuracy
             train_correct += torch.sum(torch.argmax(logits, axis=0)
                                        == torch.argmax(y_train, axis=0)).item()
             train_total += y_train.shape[1]
-
-        model.first_layer.step()
-        model.output_layer.step()
 
         avg_train_loss = train_loss / len(train_loader)
         train_losses.append(avg_train_loss)
@@ -349,10 +355,11 @@ if __name__ == "__main__":
         test_accuracy = test_correct / test_total
         test_accuracies.append(test_accuracy)
 
-        print(
-            f"""Epoch [{epoch + 1}/{epochs}], Train Loss: {avg_train_loss:.4f},
-            Train Acc: {train_accuracy:.4f} | Test Loss: {avg_test_loss:.4f}, Test Acc: {test_accuracy:.4f}"""
-        )
+        if epoch % 20 == 0:
+            print(
+                f"""Epoch [{epoch + 1}/{epochs}], Train Loss: {avg_train_loss:.4f},
+                Train Acc: {train_accuracy:.4f} | Test Loss: {avg_test_loss:.4f}, Test Acc: {test_accuracy:.4f}"""
+            )
 
     # Plot Loss & Accuracy
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 5))
