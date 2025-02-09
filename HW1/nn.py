@@ -6,6 +6,7 @@ IMPORTANT: DO NOT change any function signatures
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -66,13 +67,15 @@ class ReLU(Transform):
         x shape (indim, batch_size)
         return shape (indim, batch_size)
         """
-        return np.maximum(0.0, x)
+        self.x = x
+        return x * (x > 0).float()
 
     def backward(self, grad_wrt_out):
         """
         grad_wrt_out shape (outdim, batch_size)
         """
-        return 0.0 if grad_wrt_out <= 0 else 1.0
+
+        return grad_wrt_out * (self.x > 0)
 
 
 class LinearMap(Transform):
@@ -83,16 +86,15 @@ class LinearMap(Transform):
         lr: learning rate
         """
         super(LinearMap, self).__init__()
-        rng = np.random.default_rng(seed=1)
 
-        self.weights = 0.01 * rng.random((outdim, indim))
-        # self.weights = 0.01 * \
-        #     torch.rand((outdim, indim), dtype=torch.float64,
-        #                requires_grad=True, device=device)
-        self.bias = 0.01 * rng.random((outdim, 1))
-        # self.bias = 0.01 * \
-        #     torch.rand((outdim, 1), dtype=torch.float64,
-        #                requires_grad=True, device=device)
+        self.weights = 0.01 * \
+            torch.rand((outdim, indim), dtype=torch.float64,
+                       requires_grad=True, device=device)
+
+        self.bias = 0.01 * \
+            torch.rand((outdim, 1), dtype=torch.float64,
+                       requires_grad=True, device=device)
+
         self.lr = lr
 
     def forward(self, x):
@@ -100,26 +102,36 @@ class LinearMap(Transform):
         x shape (indim, batch_size)
         return shape (outdim, batch_size)
         """
-        return np.dot(self.weights, x) + self.bias
+        self.x = x
+        self.logits = torch.matmul(self.weights, self.x) + self.bias
+        return self.logits
 
     def backward(self, grad_wrt_out):
         """
         grad_wrt_out shape (outdim, batch_size)
         return shape (indim, batch_size)
         """
+        batch_size = grad_wrt_out.shape[1]
+
         # compute grad_wrt_weights
+        self.grad_wrt_weights = torch.matmul(
+            grad_wrt_out, self.x.T) / batch_size
 
         # compute grad_wrt_bias
+        self.grad_wrt_bias = torch.mean(grad_wrt_out, axis=1, keepdims=True)
 
         # compute & return grad_wrt_input
+        self.grad_wrt_input = torch.matmul(self.weights.T, grad_wrt_out)
 
-        raise NotImplementedError()
+        return self.grad_wrt_input
 
     def step(self):
         """
         apply gradients calculated by backward() to update the parameters
         """
-        raise NotImplementedError()
+        with torch.no_grad():
+            self.weights -= self.lr * self.grad_wrt_weights
+            self.bias -= self.lr * self.grad_wrt_bias
 
 
 class SoftmaxCrossEntropyLoss(object):
@@ -131,12 +143,14 @@ class SoftmaxCrossEntropyLoss(object):
         """
 
         # Calculate softmax
-        exp_logits = np.exp(logits)
-        sm = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+        self.labels = labels
+        self.exp_logits = torch.exp(logits)
+        self.sm = self.exp_logits / \
+            torch.sum(self.exp_logits, axis=1, keepdims=True)
 
         # Calculate cross entropy loss
-        return -np.mean(
-            np.sum(labels * np.log(sm), axis=1)
+        return -torch.mean(
+            torch.sum(labels * torch.log(self.sm), axis=1)
         )
 
     def backward(self):
@@ -144,13 +158,17 @@ class SoftmaxCrossEntropyLoss(object):
         return grad_wrt_logits shape (num_classes, batch_size)
         (don't forget to divide by batch_size because your loss is a mean)
         """
-        raise NotImplementedError()
+        batch_size = self.labels.shape[1]
+        return (self.sm - self.labels) / batch_size
 
     def getAccu(self):
         """
         return accuracy here
         """
-        raise NotImplementedError()
+        preds = torch.argmax(self.sm, axis=0)
+        labels = torch.argmax(self.labels, axis=0)
+        accuracy = torch.mean(preds == labels)
+        return accuracy
 
 
 class SingleLayerMLP(Transform):
@@ -158,25 +176,46 @@ class SingleLayerMLP(Transform):
 
     def __init__(self, indim, outdim, hidden_layer=100, lr=0.01):
         super(SingleLayerMLP, self).__init__()
-        raise NotImplementedError()
+        self.indim = indim
+        self.outdim = outdim
+        self.hiddendim = hidden_layer
+        self.lr = lr
+
+        self.first_layer = LinearMap(indim=indim, outdim=self.hiddendim)
+        self.activation = ReLU()
+        self.output_layer = LinearMap(
+            indim=self.hiddendim, outdim=outdim, lr=lr)
 
     def forward(self, x):
         """
         x shape (indim, batch_size)
         return the presoftmax logits shape(outdim, batch_size)
         """
-        raise NotImplementedError()
+
+        self.x = x
+        self.hidden = self.activation.forward(
+            self.first_layer.forward(self.x))
+        return self.output_layer.forward(self.hidden)
 
     def backward(self, grad_wrt_out):
         """
         grad_wrt_out shape (outdim, batch_size)
         calculate the gradients wrt the parameters
         """
-        raise NotImplementedError()
+        # Backpropagate through output layer
+        grad_hidden = self.output_layer.backward(grad_wrt_out)
+
+        # Backpropagate through ReLU
+        grad_hidden *= self.activation.backward(self.hidden)
+
+        # Backpropagate through first layer
+        self.first_layer.backward(grad_hidden)
 
     def step(self):
         """update model parameters"""
-        raise NotImplementedError()
+
+        self.first_layer.step()
+        self.output_layer.step()
 
 
 class DS(Dataset):
@@ -201,7 +240,7 @@ def labels2onehot(labels: np.ndarray):
 if __name__ == "__main__":
     """The dataset loaders were provided for you.
     You need to implement your own training process.
-    You need plot the loss and accuracies during the training process and test process. 
+    You need plot the loss and accuracies during the training process and test process.
     """
 
     indim = 60
@@ -233,23 +272,99 @@ if __name__ == "__main__":
     test_ds = DS(Xtest, Ytest)
     test_loader = DataLoader(test_ds, batch_size=batch_size)
 
-    # TEMP test
-    x = Xtrain[:batch_size]
-    y = Ytrain[:batch_size]
+    model = SingleLayerMLP(indim, outdim, hidden_dim, lr)
+    loss_fn = SoftmaxCrossEntropyLoss()
 
-    x = LinearMap(indim=indim, outdim=hidden_dim).forward(x.T)
+    train_losses = []
+    test_losses = []
 
-    relu = ReLU()
-    x = relu.forward(x)
+    train_accuracies = []
+    test_accuracies = []
 
-    x = LinearMap(hidden_dim, outdim).forward(x)
+    print(f"device {device}")
 
-    scel = SoftmaxCrossEntropyLoss()
+    for epoch in range(epochs):
+        # Training phase
+        train_correct = 0
+        train_total = 0
+        train_loss = 0.0
 
-    loss = scel.forward(x.T, labels2onehot(y))
-    print(loss)
+        for X_train, y_train in train_loader:
+            # Move data to GPU and convert to correct format
+            X_train = X_train.to(device).T  # Shape (indim, batch_size)
+            # One-hot encode in NumPy
+            y_train = labels2onehot(y_train.numpy()).T
+            y_train = torch.tensor(
+                y_train, dtype=torch.float64, device=device)  # Move to GPU
 
-    # construct the model
-    # raise NotImplementedError()
-    # construct the training process
-    # raise NotImplementedError()
+            # Zero the gradients before each backward pass
+            model.first_layer.weights.grad = None
+            model.first_layer.bias.grad = None
+            model.output_layer.weights.grad = None
+            model.output_layer.bias.grad = None
+
+            # Forward pass
+            logits = model.forward(X_train)
+            loss = loss_fn.forward(logits, y_train)
+            train_loss += loss.item()
+
+            # Backward pass and update
+            model.backward(loss_fn.backward())
+
+            # Compute accuracy
+            train_correct += torch.sum(torch.argmax(logits, axis=0)
+                                       == torch.argmax(y_train, axis=0)).item()
+            train_total += y_train.shape[1]
+
+        model.first_layer.step()
+        model.output_layer.step()
+
+        avg_train_loss = train_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
+        train_accuracy = train_correct / train_total
+        train_accuracies.append(train_accuracy)
+
+        # Evaluation phase
+        test_correct = 0
+        test_total = 0
+        test_loss = 0.0
+
+        with torch.no_grad():  # No gradients needed during testing
+            for X_test, y_test in test_loader:
+                X_test = X_test.to(device).T
+                y_test = labels2onehot(y_test.numpy()).T
+                y_test = torch.tensor(
+                    y_test, dtype=torch.float64, device=device)
+
+                test_logits = model.forward(X_test)
+                loss = loss_fn.forward(test_logits, y_test)
+                test_loss += loss.item()
+
+                test_correct += torch.sum(torch.argmax(test_logits, axis=0)
+                                          == torch.argmax(y_test, axis=0)).item()
+                test_total += y_test.shape[1]
+
+        avg_test_loss = test_loss / len(test_loader)
+        test_losses.append(avg_test_loss)
+        test_accuracy = test_correct / test_total
+        test_accuracies.append(test_accuracy)
+
+        print(
+            f"""Epoch [{epoch + 1}/{epochs}], Train Loss: {avg_train_loss:.4f},
+            Train Acc: {train_accuracy:.4f} | Test Loss: {avg_test_loss:.4f}, Test Acc: {test_accuracy:.4f}"""
+        )
+
+    # Plot Loss & Accuracy
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 5))
+
+    ax1.plot(train_losses, label="Train Loss")
+    ax1.plot(test_losses, label="Test Loss")
+    ax1.set(xlabel="Epochs", ylabel="Loss")
+    ax1.legend()
+
+    ax2.plot(train_accuracies, label="Train Accuracy")
+    ax2.plot(test_accuracies, label="Test Accuracy")
+    ax2.set(xlabel="Epochs", ylabel="Accuracy")
+    ax2.legend()
+
+    plt.savefig("nn.png")
