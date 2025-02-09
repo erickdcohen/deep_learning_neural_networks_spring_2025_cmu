@@ -75,6 +75,7 @@ class ReLU(Transform):
         grad_wrt_out shape (outdim, batch_size)
         """
 
+        # gradient for relu
         return grad_wrt_out * (self.x > 0)
 
 
@@ -107,7 +108,10 @@ class LinearMap(Transform):
         return shape (outdim, batch_size)
         """
         self.x = x
+
+        # get logits Wx + b
         self.logits = torch.matmul(self.weights, self.x) + self.bias
+
         return self.logits
 
     def backward(self, grad_wrt_out):
@@ -115,7 +119,6 @@ class LinearMap(Transform):
         grad_wrt_out shape (outdim, batch_size)
         return shape (indim, batch_size)
         """
-        batch_size = grad_wrt_out.shape[1]
 
         # compute grad_wrt_weights
         self.grad_wrt_weights = torch.matmul(
@@ -134,17 +137,10 @@ class LinearMap(Transform):
         """
         apply gradients calculated by backward() to update the parameters
         """
+        # SGD adjust weights and bias with learning rate and gradients
         with torch.no_grad():
             self.weights -= self.lr * self.grad_wrt_weights
             self.bias -= self.lr * self.grad_wrt_bias
-
-        # with torch.no_grad():
-        #     # Print before update
-        #     print("Before Update: ", self.weights[0, 0].item())
-        #     self.weights -= self.lr * self.grad_wrt_weights
-        #     self.bias -= self.lr * self.grad_wrt_bias
-        #     # Print after update
-        #     print("After Update: ", self.weights[0, 0].item())
 
 
 class SoftmaxCrossEntropyLoss(object):
@@ -207,7 +203,7 @@ class SingleLayerMLP(Transform):
         x shape (indim, batch_size)
         return the presoftmax logits shape(outdim, batch_size)
         """
-
+        # forward pass through each layer
         self.input = x
         self.z1 = self.first_layer.forward(x)
         self.a1 = self.activation.forward(self.z1)
@@ -234,6 +230,7 @@ class SingleLayerMLP(Transform):
     def step(self):
         """update model parameters"""
 
+        # update parameters
         self.first_layer.step()
         self.hidden_layer.step()
 
@@ -292,9 +289,13 @@ if __name__ == "__main__":
     test_ds = DS(Xtest, Ytest)
     test_loader = DataLoader(test_ds, batch_size=batch_size)
 
+    # Instance for model
     model = SingleLayerMLP(indim, outdim, hidden_dim, lr)
+
+    # define loss function
     loss_fn = SoftmaxCrossEntropyLoss()
 
+    # lists to hold values for loss and accuracy as we iterate through epochs
     train_losses = []
     test_losses = []
 
@@ -313,6 +314,7 @@ if __name__ == "__main__":
             # Move data to GPU and convert to correct format
             X_train = X_train.to(device).T.float()
 
+            # encode y and make torch tensor
             y_train = labels2onehot(y_train.numpy()).T
             y_train = torch.tensor(
                 y_train, dtype=torch.float32, device=device)
@@ -322,9 +324,10 @@ if __name__ == "__main__":
             loss = loss_fn.forward(logits, y_train)
             train_loss += loss.item()
 
-            # Backward pass and update
+            # Backward pass
             model.backward(loss_fn.backward())
 
+            # update weights and bias
             model.step()
 
             # Compute accuracy
@@ -342,14 +345,24 @@ if __name__ == "__main__":
         test_total = 0
         test_loss = 0.0
 
-        with torch.no_grad():  # No gradients needed during testing
+        # No gradients needed during testing
+        with torch.no_grad():
             for X_test, y_test in test_loader:
+
+                # Make float to device
                 X_test = X_test.to(device).T.float()
+
+                # encode y
                 y_test = labels2onehot(y_test.numpy()).T
+
+                # move to device torch tensor
                 y_test = torch.tensor(
                     y_test, dtype=torch.float32, device=device)
 
+                # forward pass
                 test_logits = model.forward(X_test)
+
+                # get loss
                 loss = loss_fn.forward(test_logits, y_test)
                 test_loss += loss.item()
 

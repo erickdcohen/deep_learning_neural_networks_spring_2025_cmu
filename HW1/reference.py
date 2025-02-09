@@ -30,6 +30,8 @@ class SingleLayerMLP(nn.Module):
         self.first_layer = nn.Linear(indim, hidden_dim)
         self.relu = nn.ReLU()
         self.hidden_layer = nn.Linear(hidden_dim, outdim)
+
+        # ensure same type
         self.double()
 
     def forward(self, x):
@@ -62,17 +64,35 @@ def validate(loader):
     """takes in a dataloader, then returns the model loss and accuracy on this loader"""
 
     if loader == train_loader:
+
+        # set model to train mode
         model.train()
+
+        # variables to hold loss and accuracy calculations
         train_correct = 0
         train_total = 0
         train_loss = 0.0
+
         for inputs, labels in loader:
+
+            # iterate through loader, move to Cuda device if available
             inputs, labels = inputs.to(device), labels.to(device)
+
+            # zero out gradients so they don't accumulate
             optimizer.zero_grad()
+
+            # forward pass
             outputs = model(inputs)
+
+            # get the loss
             loss = criterion(outputs, labels)
+
+            # backward pass
             loss.backward()
+
+            # update weights
             optimizer.step()
+
             train_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
             train_total += labels.size(0)
@@ -83,16 +103,27 @@ def validate(loader):
 
         return avg_train_loss, train_accuracy
     else:
+        # test, so model eval mode
         model.eval()
+
+        # variables to hold for scoring
         eval_correct = 0
         eval_total = 0
         eval_loss = 0.0
+
+        # no grad needed for testing / val
         with torch.no_grad():
             for inputs, labels in loader:
+                # move to device
                 inputs, labels = inputs.to(device), labels.to(device)
+
+                # forward pass
                 outputs = model(inputs)
+
+                # get loss values
                 loss = criterion(outputs, labels)
                 eval_loss += loss.item()
+
                 _, predicted = torch.max(outputs.data, 1)
                 eval_total += labels.size(0)
                 eval_correct += (predicted == labels).sum().item()
