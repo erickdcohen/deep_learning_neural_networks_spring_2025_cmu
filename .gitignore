@@ -8,3 +8,5 @@ HW1/*.pdf
 **/*.png
 **/*.zip
 **/*predictions.csv
+**/*cache
+**/*lightning_logs
