@@ -42,5 +42,5 @@ class PAFDatamodule(LightningDataModule):
         return DataLoader(data, batch_size=self.batch_size, shuffle=False)
 
     def predict_dataloader(self):
-        data = self.get_dataset("test")
+        data = self.get_dataset("test", False)
         return DataLoader(data, batch_size=self.batch_size, shuffle=False)

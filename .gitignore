@@ -10,3 +10,5 @@ HW1/*.pdf
 **/*predictions.csv
 **/*cache
 **/*lightning_logs
+**/*__pycache__
+**/*output
