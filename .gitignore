@@ -8,3 +8,7 @@ HW1/*.pdf
 **/*.png
 **/*.zip
 **/*predictions.csv
+**/*cache
+**/*lightning_logs
+**/*__pycache__
+**/*output
