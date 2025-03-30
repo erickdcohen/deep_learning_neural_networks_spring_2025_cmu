@@ -31,16 +31,16 @@ class PAFDatamodule(LightningDataModule):
 
     def train_dataloader(self):
         data = self.get_dataset("train")
-        return DataLoader(data, batch_size=self.batch_size, shuffle=True)
+        return DataLoader(data, batch_size=self.batch_size, num_workers=4, shuffle=True)
 
     def val_dataloader(self):
         data = self.get_dataset("val")
-        return DataLoader(data, batch_size=self.batch_size, shuffle=False)
+        return DataLoader(data, batch_size=self.batch_size, num_workers=4, shuffle=False)
 
     def test_dataloader(self):
         data = self.get_dataset("test")
-        return DataLoader(data, batch_size=self.batch_size, shuffle=False)
+        return DataLoader(data, batch_size=self.batch_size, num_workers=4, shuffle=False)
 
     def predict_dataloader(self):
         data = self.get_dataset("test", False)
-        return DataLoader(data, batch_size=self.batch_size, shuffle=False)
+        return DataLoader(data, batch_size=self.batch_size, num_workers=4, shuffle=False)
