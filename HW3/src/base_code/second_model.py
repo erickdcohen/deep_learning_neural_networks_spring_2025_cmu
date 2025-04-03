@@ -97,8 +97,8 @@ class ProteinClassifierHF(LightningModule):
         val_acc = self.val_accuracy(preds, y)
 
         # Logging
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val_accuracy", val_acc, on_step=False,
+        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val_accuracy", val_acc, on_step=True,
                  on_epoch=True, prog_bar=True)
 
         return loss

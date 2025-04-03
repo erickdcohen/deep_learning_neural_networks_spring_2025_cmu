@@ -23,7 +23,7 @@ if __name__ == "__main__":
     chkpts = os.listdir(CHKPTS_PATH)
 
     model = ProteinClassifierHF.load_from_checkpoint(
-        CHKPTS_PATH + "esm2_t6_8M_UR50D-epoch=00-val_loss=0.01.ckpt",
+        CHKPTS_PATH + "esm2_t6_8M_UR50D-epoch=04-val_loss=0.01.ckpt",
         n_classes=n_classes,
         BASE_MODEL_NAME=BASE_MODEL_NAME
     )
